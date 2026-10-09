@@ -15,7 +15,7 @@ test('archivo MP3 local, panel sin YouTube, audio conectado al grabador',()=>{
  assert.match(recorder,/PrimalMusic\?\.detachRecorder/);
  assert.match(music,/createMediaElementSource/);
  const data=fs.statSync(path.join(root,'audio','primal-background.mp3'));
- assert.ok(data.size>40000000&&data.size<100000000);
+ assert.ok(data.size>20000000&&data.size<25*1024*1024);
 });
 test('servidor sirve MP3 con rangos para la reproducción progresiva',async()=>{
  const s=createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));
