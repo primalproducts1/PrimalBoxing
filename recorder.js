@@ -106,12 +106,15 @@
   }
   function updateSoundButton(){
     const b=$('recordStageSound');
+    if(!b)return;
     const ready=Boolean(ctx&&ctx.state==='running');
     b.classList.toggle('is-ready',ready);
-    if(monitorWarning) b.textContent=T('◖)) Toca para oír la voz','◖)) Tap for sound');
-    else if(apple) b.textContent=T('◖)) Probar voz','◖)) Test coach');
-    else b.textContent=ready?T('◖)) Voz activa','◖)) Voice on'):T('◖)) Probar voz','◖)) Test voice');
-    b.setAttribute('aria-label',ready?T('Probar voz','Test coach audio'):T('Activar voz del entrenador','Enable coach audio'));
+    b.textContent=monitorFallbackMode?
+      T('◖)) Voz alternativa activa','◖)) Alternate audio on'):
+      T('◖)) ¿No se oye? Tocar aquí','◖)) No sound? Tap here');
+    b.setAttribute('aria-label',monitorFallbackMode?
+      T('Volver a la salida de voz principal','Use main speaker audio'):
+      T('Activar salida alternativa de voz','Enable alternate speaker audio'));
   }
   function stopSpeaking(){
     ++generation;
@@ -129,9 +132,9 @@
       console.warn('Missing recorded phrase:', parts.filter((p,i)=>!clips[i]));
       done();return true;
     }
-    // Native media playback bypasses iOS WebAudio silent-mode limitations.
-    // The saved video continues to use WebAudio, without acoustic microphone echo.
-    if(apple)playNativeMonitor(clips,token);
+    // Optional alternative output is deliberately independent of the
+    // recorded WebAudio graph. Never double-play in normal speaker mode.
+    if(monitorFallbackMode)playNativeMonitor(clips,token);
     // Resume if iOS suspended WebAudio after granting camera permission.
     ensureAudible().then(ok=>{
       if(token!==generation)return;
@@ -171,6 +174,7 @@
     cameraStream=null;canvasStream=null;combinedStream=null;
     micSource?.disconnect();micSource=null;
     clearNativeMonitor();
+    monitorFallbackMode=false;
     if(nativeMonitor){nativeMonitor.removeAttribute('src');nativeMonitor.load();nativeMonitor=null;}
     speakerGain?.disconnect();speakerGain=null;
     coachOutput?.disconnect();coachOutput=null;
@@ -368,26 +372,17 @@
       window.PrimalMusic?.attachRecorder(ctx,mixer);
       coachOutput=ctx.createGain();coachOutput.gain.value=0.95;
       speakerGain=ctx.createGain();
-      // iOS monitors through an independent HTML audio player instead;
-      // on other systems WebAudio feeds both speakers and the recorder.
-      speakerGain.gain.value=0;
+      // CRITICAL FIX: the former build set this gain to 0, meaning the
+      // coach reached the exported video but was intentionally silent on
+      // the phone. Feed the SAME clip to the device speaker and recorder.
+      speakerGain.gain.value=0.98;
       coachOutput.connect(speakerGain).connect(ctx.destination);
       coachOutput.connect(mixer);
       const bankId=I.lang+'-'+$('stance').value;
       voiceData=window.PrimalVoiceBank[bankId];
-      if(false && apple){
-        createNativeMonitor(voiceData.url);
-        // Initiate playback inside this actual button press to unlock iOS audio.
-        // No microphone is required: the coach voice is mixed digitally.
-        nativeMonitor.volume=0.05;
-        const attempt=nativeMonitor.play();
-        if(attempt?.then)attempt.then(()=>{
-          if(nativeMonitor){if(!active){nativeMonitor.pause();nativeMonitor.currentTime=0;}nativeMonitor.volume=1;monitorGranted=true;}
-        }).catch(err=>{
-          if(nativeMonitor)nativeMonitor.volume=1;
-          console.warn('First native monitor unlock blocked:',err);
-        });
-      }
+      // Audio is first unlocked directly by the user's Record button.
+      // If a particular iPhone still mutes WebAudio, the full-screen
+      // sound button enables native HTMLAudioElement as an alternative.
       const response=await fetch(voiceData.url);
       if(!response.ok)throw new Error('Audio files not found');
       voiceBuffer=await ctx.decodeAudioData(await response.arrayBuffer());
@@ -449,37 +444,49 @@
   const askStop=()=>finish();
   $('recordStop').addEventListener('click',askStop);
   $('recordStageStop').addEventListener('click',askStop);
-  $('recordStageSound').addEventListener('click',()=>{window.PrimalVoice?.say(I.lang==='en'?'Hands up. Jab. Cross.':'Manos arriba. Yab. Recto.'); return;
-    // Never trigger the main voice scheduler here: it cancels the active sequence and
-    // would leave the workout speech scheduler waiting indefinitely.
+  $('recordStageSound').addEventListener('click',()=>{
+    if(!active)return;
     setAudioSession($('recordMicrophone').checked);
-    ensureAudible();
-    if(false && apple&&nativeMonitor&&voiceData){
-      // Native media playback must be initiated right in this click handler on iOS.
-      if(!nativeMonitor.paused){
-        monitorWarning=false;updateSoundButton();return;
-      }
-      const clip=voiceData.phrases[I.lang==='en'?'hands up':'manos arriba'];
-      if(!clip)return;
-      const token=generation;
+    void ensureAudible();
+    monitorFallbackMode=!monitorFallbackMode;
+    if(monitorFallbackMode){
+      // Safari sometimes mutes its WebAudio output when MediaRecorder uses
+      // the camera. An HTML audio element gives the listener another route;
+      // the WebAudio clips continue into the video without interruption.
       try{
-        nativeMonitor.currentTime=clip[0]+.006;
-        const playing=nativeMonitor.play();
-        if(playing?.then)playing.then(()=>{
-          monitorWarning=false;monitorGranted=true;updateSoundButton();
-        }).catch(err=>{console.warn('Coach monitor blocked on tap',err);monitorWarning=true;updateSoundButton();});
-        monitorTimeouts.push(setTimeout(()=>{
-          if(token===generation&&nativeMonitor)nativeMonitor.pause();
-        },Math.min(1100,Math.round(clip[1]*1000))));
-      }catch(err){monitorWarning=true;updateSoundButton();}
-    }else if(ctx){
-      // Independent audible click-feedback on other browsers.
-      try{const osc=ctx.createOscillator(),gain=ctx.createGain();
-        osc.frequency.value=660;gain.gain.setValueAtTime(0.07,ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+.16);
-        osc.connect(gain).connect(ctx.destination);osc.start();osc.stop(ctx.currentTime+.17);
-      }catch{}
+        createNativeMonitor(voiceData.url);
+        speakerGain.gain.value=0;
+        // A tap permits playback on iOS; trigger a short phrase now.
+        const key=I.lang==='en'?'hands up':'manos arriba';
+        const clip=voiceData.phrases[key]||Object.values(voiceData.phrases)[0];
+        if(clip){
+          const token=generation;
+          nativeMonitor.currentTime=Math.max(0,clip[0]+.006);
+          const played=nativeMonitor.play();
+          played?.then(()=>{monitorGranted=true;monitorWarning=false;updateSoundButton();})
+            .catch(err=>{
+              console.warn('Alternative speaker output blocked:',err);
+              monitorFallbackMode=false;
+              if(speakerGain)speakerGain.gain.value=.98;
+              monitorWarning=true;
+              updateSoundButton();
+            });
+          monitorTimeouts.push(setTimeout(()=>{
+            if(nativeMonitor && token===generation)nativeMonitor.pause();
+          },Math.max(450,Math.min(1100,Math.round(clip[1]*1000)))));
+        }
+      }catch(err){
+        console.warn('Alternative speaker output blocked:',err);
+        monitorFallbackMode=false;
+        if(speakerGain)speakerGain.gain.value=.98;
+        monitorWarning=true;
+        status('Safari bloqueó esta salida de sonido. Prueba con el volumen multimedia alto y el micrófono desactivado.','Safari blocked this audio output. Raise media volume and keep the microphone off.');
+      }
+    }else{
+      clearNativeMonitor();
+      if(speakerGain)speakerGain.gain.value=.98;
     }
+    updateSoundButton();
   });
   $('newRecording').onclick=()=>{if(!confirm(T('Antes de comenzar otra grabación, guarda el video anterior. ¿Continuar?','Save your previous video before starting another recording. Continue?')))return;clearResult();};
   $('shareRecording').onclick=async()=>{

@@ -144,3 +144,5 @@ body[data-state="done"] .home-menu{display:inline-flex!important}
 .primal-music-status{font-size:11px;color:#aeb1b9;line-height:1.4;margin:9px 0 0}
 body.is-recording .primal-music-dock{display:none!important}
 @media(max-width:400px){.record-stage-controls{flex-wrap:wrap}.primal-music-actions{gap:8px}.primal-music-actions button{padding:8px;font-size:11px}.record-stage-controls{gap:5px}.record-stage-stop,.record-stage-sound{padding:9px 8px;font-size:11px;min-height:44px}}
+
+#voiceTuning[hidden]{display:none!important}

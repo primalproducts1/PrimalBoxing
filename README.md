@@ -1,28 +1,24 @@
-# PRIMAL Boxing Club — versión música local
+# PRIMAL Boxing Club · Voz idéntica al entrenar y compartir
 
-Aplicación bilingüe de boxeo con cámara, cronómetro, superposiciones y música de fondo aportada por el usuario.
+Esta edición prioriza que la voz que oye el usuario **sea la misma** en:
 
-## Actualización MP3
+- Entrenamiento sin cámara.
+- Entrenamiento con cámara.
+- Video descargado o compartido.
 
-- Ya no utiliza YouTube ni Spotify.
-- `audio/primal-background.mp3` contiene la mezcla original suministrada, convertida a un nivel reducido (~19% de amplitud) para evitar tapar la voz incluso en iPhone, donde JavaScript no siempre puede controlar el volumen de un elemento de audio.
-- La música puede reproducirse continuamente durante la bienvenida, preparación, rounds y descansos. Tiene controles de reproducción y pausa, incluido el modo cámara.
-- La música se conecta al video con un segundo reproductor sincronizado, sin duplicarse por altavoz. La mezcla se graba junto al video **si el navegador permite el enrutamiento MediaElement → Web Audio → MediaRecorder**. Debes comprobarlo en Safari/iPhone; si el navegador bloquea esa ruta, la música podría no quedar en el archivo.
-- El navegador puede exigir pulsar **Reproducir música** para comenzar; autoplay con sonido no está garantizado.
-- El archivo MP3 dura aproximadamente 59 min 58 s y ocupa ~21,6 MB. Esta versión está recodificada a 48 kb/s para que se pueda subir desde el navegador a GitHub (límite de 25 MiB por archivo). Su fidelidad es menor que la del original de ~43 MB; para conservar el original, utiliza GitHub Desktop.
+Los dos modos usan `voice-bank.js` y los mismos MP3 en `coach-audio/` (español/inglés y guardia diestra/zurda). Durante la grabación, una única señal local se envía al altavoz y a la pista de audio del archivo, que luego se usa sin modificaciones tanto al descargar como al compartir.
 
-## Voz del entrenador
+**Limitación esencial:** se usa la **voz pregrabada provisional**, no la voz más natural de `speechSynthesis` del iPhone. No es posible capturar digitalmente esa voz nativa en el video mediante las APIs que usa esta app. Para conseguir una voz más natural *y* exportarla idéntica, hay que sustituir los MP3 por grabaciones originales de mayor calidad, por ejemplo producidas con una voz licenciada. Los controles de tono y velocidad están ocultos para no sugerir ajustes que afectarían la consistencia.
 
-La voz que escucha la persona durante las sesiones y al grabar proviene de `speechSynthesis` (voces del dispositivo). La pista de voz que se incluye en el video sigue siendo la **voz pregrabada provisional** del proyecto: `speechSynthesis` no permite extraer el audio para `MediaRecorder`. Cambiar la música no resuelve todavía esa diferencia. Una futura versión puede usar grabaciones de voz de calidad para escuchar y exportar exactamente la misma voz.
+La música local MP3 se conserva y está conectada al mezclador del grabador. La reproducción y la exportación con audio todavía necesitan comprobarse físicamente en Safari/iPhone, donde pueden existir restricciones del sistema. La app no sube grabaciones a servidores.
 
-## Publicar en GitHub
+## Cómo publicar
 
-**Si GitHub muestra este README en lugar de la app, es porque falta `index.html` en la raíz del repositorio.** Arrastra los archivos que están dentro de la carpeta extraída, no el ZIP ni la carpeta superior.
+1. Descomprime `PRIMAL_MISMA_VOZ_VIDEO_GitHub.zip`.
+2. Entra en el repositorio GitHub `primalproducts1/PrimalBoxing` y utiliza Add file → Upload files.
+3. Sube **el contenido extraído**, con `index.html` en la raíz; no subas la carpeta contenedora.
+4. Incluye las carpetas `audio/` y `coach-audio/` completas; mantén `app.js`, `recorder.js`, `coach.js`, `voice-bank.js`, `index.html`, `music.js`, `i18n.js` y el resto de archivos.
+5. Confirma **Commit changes** y comprueba la publicación en Settings → Pages.
+6. Actualiza la app, graba una sesión de 10 segundos y compara lo que se oye mientras se graba con el video descargado y compartido.
 
-1. Descomprime el ZIP.
-2. En el repositorio GitHub existente usa **Add file → Upload files**.
-3. Sube todos los archivos, manteniendo las carpetas `audio/` y `coach-audio/`.
-4. Haz **Commit changes** y espera al despliegue de Pages.
-5. Recarga la página y prueba un video de 10 segundos en tu iPhone: música audible, botón de pausa, video descargado con música y voz provisional.
-
-**Derechos de uso:** si la música incluye canciones de terceros, verifica que tienes la autorización necesaria para almacenarla públicamente en GitHub Pages e incorporarla a videos compartidos. Tener el MP3 no concede esos derechos automáticamente.
+El MP3 de música procede del archivo aportado por el usuario. Verifica que tengas los derechos necesarios para distribuir la música comercial dentro de la aplicación y los videos resultantes.

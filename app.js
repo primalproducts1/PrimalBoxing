@@ -19,9 +19,13 @@ function speak(text,done=()=>{}){
  const ticket=speechToken;
  speechBusy=true;document.body.classList.add('coach-speaking');window.PrimalMusic?.voiceStart();
  const end=()=>{if(ticket!==speechToken)return;speechBusy=false;document.body.classList.remove('coach-speaking');window.PrimalMusic?.voiceEnd();done();};
- // While filming, the separate recorder channel supplies recordable audio,
- // while the listener hears exactly the same device voice as a normal workout.
- if(window.PrimalRecorder?.active)window.PrimalRecorder.say(text,()=>{});
+ // During filming, ONE audio source must serve both the speakers and
+ // the video's audio track. Web Speech may be silenced when iOS opens
+ // the camera and cannot itself be captured by MediaRecorder.
+ if(window.PrimalRecorder?.active){
+   window.PrimalRecorder.say(text,end);
+   return;
+ }
  if(window.PrimalVoice)window.PrimalVoice.say(text,end);else end();
 }
 function initAudio(){try{audio=audio||new(window.AudioContext||window.webkitAudioContext)();audio.resume();}catch{}}
