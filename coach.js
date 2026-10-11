@@ -1,85 +1,20 @@
- 'use strict';
-/* PRIMAL VOZ SINCRONIZADA — versión 2
-   La misma biblioteca MP3 se reproduce en la sesión normal y en la grabación.
-   Durante la grabación, el grabador envía una ÚNICA pista al altavoz + MediaRecorder.
-   Esta versión prioriza identidad de voz frente a la voz nativa del dispositivo:
-   Web Speech no expone su señal digital a MediaRecorder. */
-(() => {
-  const I=window.PrimalI18n, $=id=>document.getElementById(id);
-  const Ctor=window.AudioContext||window.webkitAudioContext;
-  let ctx=null, gain=null, currentKey='', currentBuffer=null;
-  let inflight=new Map(), activeSources=[], serial=0, watchdog=null;
-  const normalise=s=>String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim().replace(/^[¡¿]|[.!?¡¿]+$/g,'').replace(/\s+/g,' ');
-  const bankId=()=>I.lang+'-'+$('stance').value;
-  function update(){
-    const sel=$('voices');if(!sel)return;
-    sel.replaceChildren(new Option(I.lang==='en'?'PRIMAL · same voice in your video':'PRIMAL · misma voz en el video','primal'));
-    sel.value='primal';sel.disabled=true;
-    const note=$('audioNote');if(note)note.textContent=I.lang==='en'?
-      'This same prerecorded voice plays in the workout and in the exported video. A more natural voice will need new licensed recordings.':
-      'La misma voz pregrabada suena durante el entrenamiento y en el video. Para lograr una voz más natural necesitaremos nuevas grabaciones.';
-  }
-  function stop(){
-    serial++;
-    if(watchdog)clearTimeout(watchdog);watchdog=null;
-    activeSources.forEach(s=>{try{s.stop()}catch{}});
-    activeSources=[];
-  }
-  async function ensureReady(id){
-    if(!Ctor)throw new Error('Web Audio no disponible');
-    if(!ctx){ctx=new Ctor();gain=ctx.createGain();gain.gain.value=.95;gain.connect(ctx.destination);}
-    // Resume immediately when say() was initiated via user interaction.
-    const resume=ctx.resume();
-    const data=window.PrimalVoiceBank?.[id];
-    if(!data)throw new Error('No se encontró la voz '+id);
-    if(currentKey!==id){
-      if(!inflight.has(id)){
-        inflight.set(id,(async()=>{
-          const r=await fetch(data.url);
-          if(!r.ok)throw new Error('No se pudo cargar '+data.url);
-          return ctx.decodeAudioData(await r.arrayBuffer());
-        })());
-      }
-      currentBuffer=await inflight.get(id);
-      currentKey=id;
-    }
-    await resume;
-    if(ctx.state!=='running')throw new Error('Sonido bloqueado por el navegador');
-    return {data,buffer:currentBuffer};
-  }
-  function say(text,done=()=>{}){
-    stop();const ticket=serial;
-    const id=bankId();
-    let finished=false;
-    const complete=()=>{if(finished||ticket!==serial)return;finished=true;
-      if(watchdog)clearTimeout(watchdog);watchdog=null;activeSources=[];done();};
-    // Start context setup while the app is handling the user's play gesture.
-    void ensureReady(id).then(({data,buffer})=>{
-      if(ticket!==serial)return;
-      const parts=String(text).split(/\.\s*/).map(normalise).filter(Boolean);
-      const clips=parts.map(p=>data.phrases[p]);
-      if(!clips.length||clips.some(c=>!c)){
-        console.warn('PRIMAL: audio no disponible para',parts.filter((p,i)=>!clips[i]));
-        complete();return;
-      }
-      let at=ctx.currentTime+.045;
-      clips.forEach(([offset,duration],i)=>{
-        const s=ctx.createBufferSource();s.buffer=buffer;s.connect(gain);
-        const length=Math.max(.05,duration-.015);
-        s.start(at,offset+.006,length);
-        at+=length+.14;
-        activeSources.push(s);
-        if(i===clips.length-1)s.onended=complete;
-      });
-      watchdog=setTimeout(complete,Math.ceil((at-ctx.currentTime+2)*1000));
-    }).catch(e=>{
-      console.warn('PRIMAL: voz compartida no disponible',e);
-      const n=$('audioNote');if(n)n.textContent=I.lang==='en'?'Coach audio unavailable. Check coach-audio files.':'No se pudo reproducir la voz. Comprueba la carpeta coach-audio.';
-      complete();
-    });
-  }
-  document.addEventListener('tyson-language-change',()=>{stop();update();});
-  $('stance')?.addEventListener('change',stop);
-  window.PrimalVoice={say,stop,update,get available(){return Boolean(Ctor)}};
-  update();
+'use strict';
+/* One prerecorded PRIMAL coach, one audio graph, with or without video. */
+(()=>{
+ const $=id=>document.getElementById(id),I=window.PrimalI18n;
+ const cache=new Map();let serial=0,sources=[],ctx=null,output=null,mixer=null;
+ const normalise=s=>s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim().replace(/^[¡¿]|[.!?¡¿]+$/g,'').replace(/\s+/g,' ').replace(/\byab\b/g,'jab');
+ function graph(){const c=window.PrimalMusic.getContext();if(!output){ctx=c;output=ctx.createGain();output.gain.value=.95;output.connect(ctx.destination);}return c;}
+ async function prepare(){const c=graph();if(c.state!=='running')await c.resume();const id=I.lang+'-'+$('stance').value,bank=window.PrimalVoiceBank[id];if(!bank)throw Error('Voice bank unavailable');if(!cache.has(id)){const pending=fetch(bank.url).then(r=>{if(!r.ok)throw Error('Voice file unavailable');return r.arrayBuffer();}).then(b=>c.decodeAudioData(b)).catch(e=>{cache.delete(id);throw e;});cache.set(id,pending);}return {bank,buffer:await cache.get(id)};}
+ function stop(){serial++;for(const s of sources){s.onended=null;try{s.stop();}catch{}}sources=[];}
+ function say(text,done=()=>{}){
+  stop();const ticket=serial;const rate=Math.max(.7,Math.min(1.3,Number($('rate').value)||1));
+  prepare().then(({bank,buffer})=>{if(ticket!==serial)return;const parts=text.split(/\.\s*/).map(normalise).filter(Boolean),clips=parts.map(p=>bank.phrases[p]);if(!clips.length||clips.some(c=>!c))throw Error('Missing voice phrase: '+parts.filter((p,i)=>!clips[i]).join(', '));
+   let at=ctx.currentTime;for(const [i,[start,duration]]of clips.entries()){const s=ctx.createBufferSource();s.buffer=buffer;s.playbackRate.value=rate;s.connect(output);const length=Math.max(.05,duration-.015);if(i===clips.length-1)s.onended=()=>{if(ticket===serial){sources=[];done();}};sources.push(s);s.start(at,start+.006,length);at+=length/rate;}
+  }).catch(e=>{if(ticket!==serial)return;console.warn('PRIMAL voice',e);$('audioNote').textContent=I.lang==='en'?'Voice could not load. Check your connection and try again.':'No se pudo cargar la voz. Revisa tu conexión y vuelve a intentar.';done();});
+ }
+ function attachRecorder(c,destination){graph();if(c!==ctx)throw Error('Shared context required');detachRecorder();mixer=destination;output.connect(mixer);}
+ function detachRecorder(){if(mixer&&output){try{output.disconnect(mixer);}catch{}}mixer=null;}
+ function update(){const sel=$('voices');sel.replaceChildren(new Option(I.lang==='en'?'PRIMAL Natural · same voice in every mode':'PRIMAL Natural · misma voz en todos los modos','primal'));sel.disabled=true;$('pitch').disabled=true;$('audioNote').textContent=I.lang==='en'?'One natural PRIMAL voice for training and video. Speed is adjustable; tone is fixed.':'Una misma voz natural PRIMAL para entrenar y grabar. Puedes ajustar la velocidad; el tono es fijo.';}
+ document.addEventListener('tyson-language-change',()=>{stop();update();});window.PrimalVoice={say,stop,prepare,attachRecorder,detachRecorder,update,get available(){return true;}};update();
 })();

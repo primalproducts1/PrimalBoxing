@@ -1,115 +1,29 @@
 'use strict';
-/* PRIMAL Music: user-provided, pre-attenuated MP3.
-   The native HTML audio element plays for the athlete. A synchronized second
-   element enters the recorder's AudioContext, so the exported video carries
-   the same background music without requesting microphone capture.
-   Video voice remains the current provisional bank; Web Speech TTS is not
-   directly recordable from a browser. */
-(() => {
-  const $ = id => document.getElementById(id);
-  const I = window.PrimalI18n;
-  const T = (es,en) => I.lang==='en'?en:es;
-  const audio = $('backgroundMusic');
-  const toggle = $('musicToggle');
-  const stageToggle = $('recordStageMusic');
-  const status = $('musicStatus');
-  const volumeInput = $('musicVolume');
-  let capture=null, captureSource=null, captureGain=null, recordingCtx=null, syncTimer=null;
-  let userPaused=false;
-  // Safari/iOS may ignore JS volume changes; the actual MP3 is mastered low.
-  const iOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(/Macintosh/.test(navigator.userAgent)&&navigator.maxTouchPoints>1);
-  if(iOS) volumeInput.closest('label').hidden=true;
-  const safeTime = t => Number.isFinite(t) && t >= 0 ? t : 0;
-
-  function render(){
-    const playing=!audio.paused && !audio.ended;
-    toggle.textContent=playing?T('Ⅱ Pausar música','Ⅱ Pause music'):T('▶ Reproducir música','▶ Play music');
-    toggle.setAttribute('aria-pressed',String(playing));
-    if(stageToggle){stageToggle.textContent=playing?T('Ⅱ Música','Ⅱ Music'):T('▶ Música','▶ Music');stageToggle.setAttribute('aria-pressed',String(playing));}
-    status.textContent=audio.error?T('No se pudo cargar el MP3. Verifica el archivo audio/primal-background.mp3.','Could not load music. Check audio/primal-background.mp3.'):
-      playing?T('Música de fondo · volumen bajo','Background music · low volume'):
-      T('Toca Reproducir para activar la música.','Tap Play to start music.');
-  }
-  function setVolume(){
-    // iOS Safari may ignore HTMLMediaElement.volume; the MP3 is already mastered quietly.
-    let amount=Number(volumeInput.value);
-    if(!Number.isFinite(amount))amount=100;
-    const level=Math.max(0,Math.min(1,amount/100));
-    try{audio.volume=level}catch{}
-    if(captureGain)captureGain.gain.value=level;
-  }
-  function play(){
-    userPaused=false;
-    // play() is always attempted on a user gesture when possible. Autoplay
-    // can legitimately be blocked by the browser.
-    const p=audio.play();
-    if(p?.catch)p.catch(()=>{render();});
-    render();
-    return p;
-  }
-  function pause(){
-    userPaused=true;
-    audio.pause();
-    capture?.pause();
-    render();
-  }
-  function toggleMusic(){if(audio.paused)play();else pause();}
-  toggle.addEventListener('click',toggleMusic);
-  stageToggle?.addEventListener('click',toggleMusic);
-  volumeInput.addEventListener('input',setVolume);
-
-  async function syncCapture(){
-    if(!capture)return;
-    if(audio.paused||audio.ended){if(!capture.paused)capture.pause();return;}
-    const from=safeTime(audio.currentTime);
-    try{
-      if(Math.abs(safeTime(capture.currentTime)-from)>0.25)capture.currentTime=from;
-      if(capture.paused){const p=capture.play();if(p?.catch)p.catch(err=>console.warn('Recording music playback was blocked',err));}
-    }catch(err){console.warn('Cannot sync recording music',err);}
-  }
-  function attachRecorder(context,mixer){
-    detachRecorder();
-    if(!context?.createMediaElementSource||!mixer)return false;
-    try{
-      capture=new Audio(audio.currentSrc||audio.src);
-      capture.preload='auto';capture.loop=true;capture.playsInline=true;
-      capture.crossOrigin='anonymous';
-      // The capture audio never goes directly to the speakers: only to the
-      // saved-video mixer, so there is no duplicate sound or microphone echo.
-      captureSource=context.createMediaElementSource(capture);
-      captureGain=context.createGain();captureGain.gain.value=1;
-      captureSource.connect(captureGain).connect(mixer);
-      recordingCtx=context;
-      setVolume();
-      void syncCapture();
-      syncTimer=setInterval(syncCapture,2500);
-      return true;
-    }catch(err){console.warn('Music could not be connected to video mixer',err);detachRecorder();return false;}
-  }
-  function detachRecorder(){
-    if(syncTimer){clearInterval(syncTimer);syncTimer=null;}
-    if(capture){try{capture.pause();capture.removeAttribute('src');capture.load()}catch{}}
-    try{captureSource?.disconnect()}catch{}
-    try{captureGain?.disconnect()}catch{}
-    capture=null;captureSource=null;captureGain=null;recordingCtx=null;
-  }
-  audio.addEventListener('play',()=>{void syncCapture();render();});
-  audio.addEventListener('pause',()=>{void syncCapture();render();});
-  audio.addEventListener('seeked',()=>{void syncCapture();render();});
-  audio.addEventListener('error',render);
-  audio.addEventListener('canplay',render);
-  document.addEventListener('tyson-language-change',render);
-  $('start').addEventListener('click',()=>{if(!userPaused)void play();});
-  $('recordStart').addEventListener('click',()=>{if(!userPaused)void play();});
-  window.PrimalMusic={
-    voiceStart(){ /* Background MP3 is already attenuated for speech. */ },
-    voiceEnd(){},
-    tryStart(){if(!userPaused)void play();},
-    attachRecorder,detachRecorder,syncRecorder:syncCapture,
-    get isPlaying(){return !audio.paused;},
-    get source(){return audio.currentSrc||audio.src;}
-  };
-  setVolume();render();
-  // Browser might reject this attempt; the play button remains available.
-  void play();
+/* One music player and one persistent audio graph for speakers AND saved video. */
+(()=>{
+ const $=id=>document.getElementById(id),T=(es,en)=>window.PrimalI18n.lang==='en'?en:es;
+ const audio=$('backgroundMusic'),toggle=$('musicToggle'),stageToggle=$('recordStageMusic'),status=$('musicStatus'),volumeInput=$('musicVolume');
+ let context=null,source=null,output=null,mixer=null,userPaused=false,priming=false,blocked=false;
+ const inRound=()=>['prepare','work'].includes(document.body.dataset.state);
+ function render(){const playing=!audio.paused&&!audio.ended&&inRound()&&!priming;const label=blocked?T('▶ Activar audio','▶ Enable audio'):userPaused?T('♫ Activar música','♫ Enable music'):T('♫ Desactivar música','♫ Disable music');for(const b of [toggle,stageToggle])if(b){b.textContent=label;b.setAttribute('aria-pressed',String(!userPaused));}status.textContent=audio.error?T('No se pudo cargar la música.','Music could not load.'):blocked?T('Toca Activar audio para habilitar el sonido.','Tap Enable audio to allow sound.'):userPaused?T('Música desactivada.','Music disabled.'):playing?T('Música de entrenamiento · volumen bajo','Workout music · low volume'):T('Automática desde la preparación y durante los rounds. Se detiene al descansar, pausar o terminar.','Automatic from preparation and during rounds. Stops during rests, pauses and at the end.');}
+ function setVolume(){const level=Math.max(0,Math.min(1,(Number(volumeInput.value)||0)/100));if(output){audio.volume=1;output.gain.value=level;}else audio.volume=level;}
+ function getContext(){
+  if(!context){const C=window.AudioContext||window.webkitAudioContext;if(!C)throw Error('Web Audio unavailable');context=new C();source=context.createMediaElementSource(audio);output=context.createGain();source.connect(output);output.connect(context.destination);setVolume();}
+  return context;
+ }
+ function unlock(){try{const c=getContext();if(c.state!=='running')void c.resume().catch(()=>{blocked=true;render();});}catch{}}
+ function stopAudio(){audio.pause();}
+ function play(){if(!inRound()||userPaused||priming)return;unlock();try{const p=audio.play();if(p?.catch)p.catch(()=>{if(inRound()&&!userPaused){blocked=true;render();}});render();}catch{blocked=true;render();}}
+ function reconcile(){if(!inRound()||userPaused){if(!priming)stopAudio();}else if(audio.paused&&!priming&&!blocked)play();render();}
+ function prime(){if(userPaused||priming)return;blocked=false;unlock();if(inRound()){play();return;}priming=true;audio.muted=true;const finish=()=>{stopAudio();audio.muted=false;priming=false;reconcile();};try{Promise.resolve(audio.play()).then(finish,finish);}catch{finish();}}
+ function toggleMusic(){if(blocked){blocked=false;userPaused=false;prime();return;}userPaused=!userPaused;if(userPaused){stopAudio();render();}else prime();}
+ function attachRecorder(ctx,destination){detachRecorder();if(ctx!==getContext())throw Error('Recording must use the shared audio context');mixer=destination;output.connect(mixer);return true;}
+ function detachRecorder(){if(output&&mixer){try{output.disconnect(mixer);}catch{}}mixer=null;}
+ function recover(){blocked=false;unlock();reconcile();}
+ toggle.addEventListener('click',toggleMusic);stageToggle?.addEventListener('click',toggleMusic);volumeInput.addEventListener('input',setVolume);
+ audio.addEventListener('play',()=>{if(!priming&&(!inRound()||userPaused))stopAudio();render();});audio.addEventListener('pause',render);audio.addEventListener('error',render);audio.addEventListener('canplay',render);
+ $('start').addEventListener('click',()=>{if(document.body.dataset.state==='prepare')prime();else{unlock();reconcile();}});$('recordStart').addEventListener('click',()=>{unlock();prime();});
+ new MutationObserver(reconcile).observe(document.body,{attributes:true,attributeFilter:['data-state']});document.addEventListener('tyson-language-change',render);
+ window.PrimalMusic={voiceStart(){},voiceEnd(){},tryStart:reconcile,getContext,unlock,recover,attachRecorder,detachRecorder,syncRecorder:reconcile,get isPlaying(){return !audio.paused;},get source(){return audio.currentSrc||audio.src;}};
+ setVolume();render();
 })();
